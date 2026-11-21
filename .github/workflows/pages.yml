@@ -1,0 +1,37 @@
+name: Publish built browser demo
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download verified browser build
+        env:
+          DEMO_URL: 'https://github.com/kuboderahikaru/backrooms-web-demo/releases/download/demo-fb0b22af/Backrooms-WebDemo.zip'
+        run: |
+          curl --fail --location --retry 3 "$DEMO_URL" --output demo.zip
+          echo '4231abfb6d95fbc58e0021082a708a8d6985af572a1f8dddeab78c9115f08d19  demo.zip' | sha256sum --check
+          mkdir _site
+          unzip -q demo.zip -d _site
+          test -s _site/index.html
+          test -s _site/Build/WebDemo.wasm.unityweb
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - uses: actions/deploy-pages@v4
+        id: deployment
