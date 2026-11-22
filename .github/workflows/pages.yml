@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Download verified browser build
         env:
-          DEMO_URL: 'https://github.com/kuboderahikaru/backrooms-web-demo/releases/download/demo-fb0b22af/Backrooms-WebDemo.zip'
+          DEMO_URL: 'https://github.com/Volt-Sheep/backrooms-web-demo/releases/download/demo-fb0b22af/Backrooms-WebDemo.zip'
         run: |
           curl --fail --location --retry 3 "$DEMO_URL" --output demo.zip
           echo '4231abfb6d95fbc58e0021082a708a8d6985af572a1f8dddeab78c9115f08d19  demo.zip' | sha256sum --check
