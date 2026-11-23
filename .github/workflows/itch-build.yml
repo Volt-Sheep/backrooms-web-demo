@@ -1,0 +1,166 @@
+name: Build itch demo on public runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact approved private-source commit
+        required: true
+        default: 7131b3521c9cbf6072457a78ec4eba0acf76f5a6
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-demo-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Unity WebGL (Levels 0-2)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - name: Make room on disposable GitHub runner
+        shell: bash
+        run: |
+          test "$RUNNER_ENVIRONMENT" = "github-hosted"
+          test "${{ github.event.repository.private }}" = "false"
+          test "$(awk '/MemTotal:/ {print $2}' /proc/meminfo)" -ge 15000000
+          df -h /
+          # These SDKs are unused by the Linux Unity WebGL container.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force
+          df -h /
+
+      - name: Check Unity activation secrets
+        shell: bash
+        env:
+          DEMO_SOURCE_REPOSITORY: ${{ secrets.DEMO_SOURCE_REPOSITORY }}
+          SOURCE_READ_TOKEN: ${{ secrets.SOURCE_READ_TOKEN }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          if [[ -z "$DEMO_SOURCE_REPOSITORY" || -z "$SOURCE_READ_TOKEN" || -z "$UNITY_LICENSE" || -z "$UNITY_EMAIL" || -z "$UNITY_PASSWORD" ]]; then
+            echo "::error::Set the private source repository/read token and the three Unity activation secrets in Actions settings."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DEMO_SOURCE_REPOSITORY }}
+          ref: ${{ inputs.source_commit }}
+          token: ${{ secrets.SOURCE_READ_TOKEN }}
+          lfs: true
+          persist-credentials: false
+
+      - name: Verify exact private source revision
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+
+      - name: Release downloaded LFS cache before Unity import
+        shell: bash
+        run: |
+          # Checkout has materialized the assets; Unity does not need duplicate LFS objects.
+          test -d .git/lfs/objects
+          rm -rf .git/lfs/objects
+          df -h /
+
+      - name: Prepare demo dependencies in disposable checkout
+        shell: bash
+        run: |
+          python3 Tools/prepare_web_demo_ci.py --apply
+          df -h /
+
+      - name: Restore Web shader cache
+        id: shader_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: Library/ShaderCache
+          key: ${{ runner.os }}-unity6000.3.11f1-web-shaders-v1-${{ hashFiles('Packages/packages-lock.json', 'Assets/**/*.shader', 'Assets/**/*.hlsl') }}
+
+      - name: Record runner resources
+        shell: bash
+        run: |
+          free -m
+          nproc
+          df -h /
+
+      - name: Check HTML upload contracts
+        run: python3 -m unittest discover -s Tools -p 'test_itch_web_demo.py'
+
+      - name: Build browser demo
+        id: unity
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          unityVersion: 6000.3.11f1
+          targetPlatform: WebGL
+          buildMethod: WebDemoBuilder.BuildItchCI
+          customParameters: -backroomsWebDemoCI -backroomsSourceCommit ${{ inputs.source_commit }} -job-worker-count 1
+          dockerCpuLimit: 3
+          dockerMemoryLimit: 12g
+          allowDirtyBuild: true
+          versioning: None
+
+      - name: Save completed Web shader cache
+        if: ${{ !cancelled() && (steps.unity.outcome == 'success' || steps.unity.outcome == 'failure') && steps.shader_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: Library/ShaderCache
+          key: ${{ steps.shader_cache.outputs.cache-primary-key }}
+
+      - name: Verify runnable output
+        shell: bash
+        run: |
+          test -s Builds/WebDemo/index.html
+          test -s Builds/WebDemo/Build/WebDemo.wasm.br
+          test -s Builds/WebDemo/demo-build.json
+          python3 Tools/validate_itch_web_build.py --commit ${{ inputs.source_commit }}
+
+      - name: Capture runner resource diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p Artifacts/WebDemo
+          {
+            date -u
+            free -m
+            df -h /
+            docker ps -a --format '{{.Names}} {{.Status}}'
+            sudo dmesg | grep -Ei 'Out of memory|Killed process|oom-kill|Memory cgroup' || true
+          } > Artifacts/WebDemo/runner-resources.txt
+          cat Artifacts/WebDemo/runner-resources.txt
+
+      - name: Downloadable browser demo
+        uses: actions/upload-artifact@v4
+        with:
+          name: Backrooms-WebDemo
+          path: Builds/WebDemo/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebDemo-diagnostics
+          path: |
+            Artifacts/WebDemo/build-result.txt
+            Artifacts/WebDemo/font-preparation.txt
+            Artifacts/WebDemo/preflight-checks.txt
+            Artifacts/WebDemo/ci-dependencies.json
+            Artifacts/WebDemo/level2-content.txt
+            Artifacts/WebDemo/runner-resources.txt
+            Artifacts/WebDemo/build-resources.txt
+            Artifacts/WebDemo/itch-preflight.json
+          if-no-files-found: ignore
