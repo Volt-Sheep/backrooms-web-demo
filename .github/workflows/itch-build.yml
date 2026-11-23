@@ -6,7 +6,7 @@ on:
       source_commit:
         description: Exact approved private-source commit
         required: true
-        default: 7131b3521c9cbf6072457a78ec4eba0acf76f5a6
+        default: 3c814f363d00fc285f4984408412be7095ca862e
         type: string
 
 permissions:
