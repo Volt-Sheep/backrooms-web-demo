@@ -6,7 +6,7 @@ on:
       source_commit:
         description: Exact approved private-source commit
         required: true
-        default: 3c814f363d00fc285f4984408412be7095ca862e
+        default: d6fa6d129165a2cb38d723ae16f56a9921cded69
         type: string
 
 permissions:
@@ -83,7 +83,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: Library/ShaderCache
-          key: ${{ runner.os }}-unity6000.3.11f1-web-shaders-v1-${{ hashFiles('Packages/packages-lock.json', 'Assets/**/*.shader', 'Assets/**/*.hlsl') }}
+          key: ${{ runner.os }}-unity6000.3.11f1-web-shaders-v2-${{ hashFiles('Packages/packages-lock.json', 'Assets/**/*.shader', 'Assets/**/*.hlsl') }}
+          restore-keys: |
+            ${{ runner.os }}-unity6000.3.11f1-web-shaders-v1-${{ hashFiles('Packages/packages-lock.json', 'Assets/**/*.shader', 'Assets/**/*.hlsl') }}
 
       - name: Record runner resources
         shell: bash
@@ -113,13 +115,14 @@ jobs:
           versioning: None
 
       - name: Save completed Web shader cache
-        if: ${{ !cancelled() && (steps.unity.outcome == 'success' || steps.unity.outcome == 'failure') && steps.shader_cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && (steps.unity.outcome == 'success' || steps.unity.outcome == 'failure') && steps.shader_cache.outputs.cache-hit != 'true' && hashFiles('Artifacts/WebDemo/build-resources.txt') != '' }}
         uses: actions/cache/save@v4
         with:
           path: Library/ShaderCache
           key: ${{ steps.shader_cache.outputs.cache-primary-key }}
 
       - name: Verify runnable output
+        id: verify
         shell: bash
         run: |
           test -s Builds/WebDemo/index.html
@@ -142,9 +145,10 @@ jobs:
           cat Artifacts/WebDemo/runner-resources.txt
 
       - name: Downloadable browser demo
+        if: ${{ !cancelled() && steps.unity.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
-          name: Backrooms-WebDemo
+          name: ${{ steps.verify.outcome == 'success' && 'Backrooms-WebDemo' || 'Backrooms-WebDemo-unverified' }}
           path: Builds/WebDemo/
           if-no-files-found: error
           retention-days: 14
@@ -162,5 +166,6 @@ jobs:
             Artifacts/WebDemo/level2-content.txt
             Artifacts/WebDemo/runner-resources.txt
             Artifacts/WebDemo/build-resources.txt
+            Artifacts/WebDemo/texture-preparation.txt
             Artifacts/WebDemo/itch-preflight.json
           if-no-files-found: ignore
